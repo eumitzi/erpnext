@@ -2,19 +2,20 @@
 # License: GNU General Public License v3. See license.txt
 
 from __future__ import unicode_literals
+
 import frappe
-
-from frappe.utils import flt, cint
-
-from frappe import msgprint, _
 import frappe.defaults
-from frappe.model.utils import get_fetch_values
-from frappe.model.mapper import get_mapped_doc
 from erpnext.controllers.selling_controller import SellingController
-from frappe.desk.notifications import clear_doctype_notifications
 from erpnext.stock.doctype.batch.batch import set_batch_nos
-from frappe.contacts.doctype.address.address import get_company_address
 from erpnext.stock.doctype.serial_no.serial_no import get_delivery_note_serial_no
+from frappe import _
+from frappe.contacts.doctype.address.address import get_company_address
+from frappe.desk.notifications import clear_doctype_notifications
+from frappe.model.mapper import get_mapped_doc
+from frappe.model.utils import get_fetch_values
+from frappe.utils import cint, flt
+
+from collections import defaultdict
 
 form_grid_templates = {
 	"items": "templates/form_grid/item_grid.html"
@@ -170,12 +171,12 @@ class DeliveryNote(SellingController):
 
 			if frappe.db.get_value("Item", d.item_code, "is_stock_item") == 1:
 				if e in check_list:
-					msgprint(_("Note: Item {0} entered multiple times").format(d.item_code))
+					frappe.msgprint(_("Note: Item {0} entered multiple times").format(d.item_code))
 				else:
 					check_list.append(e)
 			else:
 				if f in chk_dupl_itm:
-					msgprint(_("Note: Item {0} entered multiple times").format(d.item_code))
+					frappe.msgprint(_("Note: Item {0} entered multiple times").format(d.item_code))
 				else:
 					chk_dupl_itm.append(f)
 
@@ -213,7 +214,8 @@ class DeliveryNote(SellingController):
 
 		if not self.is_return:
 			self.check_credit_limit()
-
+		elif self.issue_credit_note:
+			self.make_return_invoice()
 		# Updating stock ledger should always be called after updating prevdoc status,
 		# because updating reserved qty in bin depends upon updated delivered qty in SO
 		self.update_stock_ledger()
@@ -316,6 +318,21 @@ class DeliveryNote(SellingController):
 
 		self.load_from_db()
 
+	def make_return_invoice(self):
+		return_invoices = defaultdict(list)
+
+		for item in self.items:
+			if item.against_sales_invoice:
+				return_invoices[item.against_sales_invoice].append(item.item_code)
+
+		for invoice, items in return_invoices.items():
+			return_invoice = make_sales_invoice(self.name)
+			return_invoice.is_return = True
+			return_invoice.return_against = invoice
+			return_invoice.items = list(filter(lambda x: x.item_code in items, return_invoice.items))
+			return_invoice.save()
+			return_invoice.submit()
+
 def update_billed_amount_based_on_so(so_detail, update_modified=True):
 	# Billed against Sales Order directly
 	billed_against_so = frappe.db.sql("""select sum(amount) from `tabSales Invoice Item`
@@ -400,7 +417,7 @@ def make_sales_invoice(source_name, target_doc=None):
 		# set company address
 		target.update(get_company_address(target.company))
 		if target.company_address:
-			target.update(get_fetch_values("Sales Invoice", 'company_address', target.company_address))	
+			target.update(get_fetch_values("Sales Invoice", 'company_address', target.company_address))
 
 	def update_item(source_doc, target_doc, source_parent):
 		target_doc.qty = source_doc.qty - invoiced_qty_map.get(source_doc.name, 0)
@@ -451,6 +468,12 @@ def make_delivery_trip(source_name, target_doc=None):
 		target_doc.customer_address = source_parent.shipping_address
 		target_doc.contact = source_parent.contact_person
 		target_doc.customer_contact = source_parent.contact_display
+		target_doc.grand_total = source_parent.grand_total
+
+		# Append unique Delivery Notes in Delivery Trip
+		delivery_notes.append(target_doc.delivery_note)
+
+	delivery_notes = []
 
 	doclist = get_mapped_doc("Delivery Note", source_name, {
 		"Delivery Note": {
@@ -464,7 +487,8 @@ def make_delivery_trip(source_name, target_doc=None):
 			"field_map": {
 				"parent": "delivery_note"
 			},
-			"postprocess": update_stop_details,
+			"condition": lambda item: item.parent not in delivery_notes,
+			"postprocess": update_stop_details
 		}
 	}, target_doc)
 

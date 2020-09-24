@@ -37,6 +37,7 @@
   "signee_company",
   "sb_references",
   "document_type",
+  "letter_head",
   "cb_links",
   "document_name",
   "amended_from"
@@ -261,10 +262,18 @@
    "fieldname": "party_address",
    "fieldtype": "Small Text",
    "label": "Party Address"
+  },
+  {
+   "allow_on_submit": 1,
+   "fieldname": "letter_head",
+   "fieldtype": "Link",
+   "label": "Letter Head",
+   "options": "Letter Head"
   }
  ],
  "is_submittable": 1,
- "modified": "2020-08-28 06:58:34.093201",
+ "links": [],
+ "modified": "2020-09-07 03:55:18.798485",
  "modified_by": "Administrator",
  "module": "CRM",
  "name": "Contract",
